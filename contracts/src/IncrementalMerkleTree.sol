@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import {IPoseidon2} from "poseidon2-evm/IPoseidon2.sol";
+import {Poseidon2} from "poseidon2-evm/Poseidon2.sol";
+import {Field} from "poseidon2-evm/Field.sol";
 
 abstract contract IncrementalMerkleTree {
     error InvalidDepth();
@@ -11,7 +12,7 @@ abstract contract IncrementalMerkleTree {
     // Domain-separated empty leaf: Fr(keccak256("yuakira"))
     uint256 public constant ZERO_LEAF = 18364542742846956303373580614229727336767827731373926140228050716427120109049;
 
-    IPoseidon2 internal immutable poseidon2;
+    Poseidon2 internal immutable poseidon2;
     uint32 public immutable treeDepth;
     uint32 public nextLeafIndex;
     uint32 public currentRootIndex;
@@ -22,7 +23,7 @@ abstract contract IncrementalMerkleTree {
     constructor(uint32 _treeDepth, address _poseidon2) {
         if (_treeDepth == 0 || _treeDepth > 32) revert InvalidDepth();
         treeDepth = _treeDepth;
-        poseidon2 = IPoseidon2(_poseidon2);
+        poseidon2 = Poseidon2(_poseidon2);
 
         roots[0] = _zeroAt(_treeDepth - 1);
     }
@@ -46,7 +47,7 @@ abstract contract IncrementalMerkleTree {
                 right = currentHash;
             }
 
-            currentHash = poseidon2.hash_2(left, right);
+            currentHash = Field.toUint256(poseidon2.hash_2(Field.toField(left), Field.toField(right)));
             _nextLeafIndex /= 2;
         }
 
