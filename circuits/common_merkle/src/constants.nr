@@ -1,0 +1,3 @@
+pub global NOTE_COMMITMENT_DOMAIN: Field = 20_001;
+pub global NULLIFIER_DOMAIN: Field = 30_001;
+pub global WITHDRAW_AUDIT_PAYLOAD_DOMAIN: Field = 6001;
