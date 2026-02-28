@@ -24,6 +24,8 @@ fn main(
     cipherNonce: pub Field,
     // Private witness
     secret: Field,
+    ownerPubX: Field,
+    ownerPubY: Field,
     ownerPrivLo: u128,
     ownerPrivHi: u128,
     newSecret: Field,
@@ -36,14 +38,8 @@ fn main(
     merklePath: [Field; 20],
     merkleIndexBits: [bool; 20],
 ) {
-    // Owner key material for spending authority of the old note.
-    let ownerScalar = EmbeddedCurveScalar { lo: ownerPrivLo as Field, hi: ownerPrivHi as Field };
-    let ownerGenerator: [EmbeddedCurvePoint; 1] =
-        std::hash::derive_generators("APT_OWNER".as_bytes(), 0);
-    let ownerPub = multi_scalar_mul(ownerGenerator, [ownerScalar]);
-
-    // Old note membership: note is bound to owner pubkey.
-    let commitment = Poseidon2::hash([secret, ownerPub.x, ownerPub.y, NOTE_COMMITMENT_DOMAIN], 4);
+    // Old note membership: note is bound to provided owner pubkey.
+    let commitment = Poseidon2::hash([secret, ownerPubX, ownerPubY, NOTE_COMMITMENT_DOMAIN], 4);
     merkle::assert_membership(merkleRoot, commitment, merklePath, merkleIndexBits);
 
     // Nullifier must be bound to both secret and spender private key limbs.
