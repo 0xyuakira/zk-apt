@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import {IVerifier} from "./Verifier.sol";
+import {IVerifier} from "./IVerifier.sol";
 import {IncrementalMerkleTree} from "./IncrementalMerkleTree.sol";
 
 contract AuditablePrivacyTransfer is IncrementalMerkleTree {
@@ -13,12 +13,17 @@ contract AuditablePrivacyTransfer is IncrementalMerkleTree {
     error InsufficientPoolBalance(uint256 requested, uint256 available);
     error PaymentFailed(address recipient, uint256 amount);
 
-    uint8 public constant TRANSFER_PUBLIC_INPUT_COUNT = 11;
-    uint8 public constant WITHDRAW_PUBLIC_INPUT_COUNT = 8;
+    uint8 public constant DEPOSIT_PUBLIC_INPUT_COUNT = 1;
+    uint8 public constant TRANSFER_PUBLIC_INPUT_COUNT = 12;
+    uint8 public constant WITHDRAW_PUBLIC_INPUT_COUNT = 9;
+    uint32 public constant TREE_DEPTH = 20;
 
-    IVerifier public immutable verifier;
+    IVerifier public immutable depositVerifier;
+    IVerifier public immutable transferVerifier;
+    IVerifier public immutable withdrawVerifier;
     uint256 public immutable denomination;
-    uint256 public immutable auditPub;
+    uint256 public immutable auditPubX;
+    uint256 public immutable auditPubY;
 
     mapping(uint256 => bool) public nullifierSpent;
     mapping(uint256 => bool) public commitmentUsed;
@@ -63,17 +68,29 @@ contract AuditablePrivacyTransfer is IncrementalMerkleTree {
         uint256 leafIndex
     );
 
-    constructor(uint32 _treeDepth, address _verifier, address _poseidon2, uint256 _denomination, uint256 _auditPub)
-        IncrementalMerkleTree(_treeDepth, _poseidon2)
-    {
-        verifier = IVerifier(_verifier);
+    constructor(
+        address _depositVerifier,
+        address _transferVerifier,
+        address _withdrawVerifier,
+        address _poseidon2,
+        uint256 _denomination,
+        uint256 _auditPubX,
+        uint256 _auditPubY
+    ) IncrementalMerkleTree(TREE_DEPTH, _poseidon2) {
+        depositVerifier = IVerifier(_depositVerifier);
+        transferVerifier = IVerifier(_transferVerifier);
+        withdrawVerifier = IVerifier(_withdrawVerifier);
         denomination = _denomination;
-        auditPub = _auditPub;
+        auditPubX = _auditPubX;
+        auditPubY = _auditPubY;
     }
 
-    function deposit(uint256 commitment) external payable {
+    function deposit(bytes calldata proof, uint256 commitment) external payable {
         if (commitmentUsed[commitment]) revert CommitmentAlreadyUsed();
         if (msg.value != denomination) revert InvalidDenomination(denomination, msg.value);
+        bytes32[] memory publicInputs = new bytes32[](DEPOSIT_PUBLIC_INPUT_COUNT);
+        publicInputs[0] = bytes32(commitment);
+        if (!depositVerifier.verify(proof, publicInputs)) revert InvalidProof();
 
         commitmentUsed[commitment] = true;
         uint32 insertedLeafIndex = nextLeafIndex;
@@ -87,19 +104,20 @@ contract AuditablePrivacyTransfer is IncrementalMerkleTree {
         if (commitmentUsed[params.transferCommitment]) revert CommitmentAlreadyUsed();
 
         bytes32[] memory publicInputs = new bytes32[](TRANSFER_PUBLIC_INPUT_COUNT);
-        publicInputs[0] = bytes32(auditPub);
-        publicInputs[1] = bytes32(params.merkleRoot);
-        publicInputs[2] = bytes32(params.transferCommitment);
-        publicInputs[3] = bytes32(params.nullifierHash);
-        publicInputs[4] = bytes32(params.encryptedNoteDataReceiver);
-        publicInputs[5] = bytes32(params.encryptedNoteDataAudit);
-        publicInputs[6] = bytes32(params.receiverEphemeralPubX);
-        publicInputs[7] = bytes32(params.receiverEphemeralPubY);
-        publicInputs[8] = bytes32(params.auditEphemeralPubX);
-        publicInputs[9] = bytes32(params.auditEphemeralPubY);
-        publicInputs[10] = bytes32(params.cipherNonce);
+        publicInputs[0] = bytes32(auditPubX);
+        publicInputs[1] = bytes32(auditPubY);
+        publicInputs[2] = bytes32(params.merkleRoot);
+        publicInputs[3] = bytes32(params.transferCommitment);
+        publicInputs[4] = bytes32(params.nullifierHash);
+        publicInputs[5] = bytes32(params.encryptedNoteDataReceiver);
+        publicInputs[6] = bytes32(params.encryptedNoteDataAudit);
+        publicInputs[7] = bytes32(params.receiverEphemeralPubX);
+        publicInputs[8] = bytes32(params.receiverEphemeralPubY);
+        publicInputs[9] = bytes32(params.auditEphemeralPubX);
+        publicInputs[10] = bytes32(params.auditEphemeralPubY);
+        publicInputs[11] = bytes32(params.cipherNonce);
 
-        if (!verifier.verify(proof, publicInputs)) revert InvalidProof();
+        if (!transferVerifier.verify(proof, publicInputs)) revert InvalidProof();
 
         nullifierSpent[params.nullifierHash] = true;
         commitmentUsed[params.transferCommitment] = true;
@@ -137,15 +155,16 @@ contract AuditablePrivacyTransfer is IncrementalMerkleTree {
 
         bytes32[] memory publicInputs = new bytes32[](WITHDRAW_PUBLIC_INPUT_COUNT);
         publicInputs[0] = bytes32(merkleRoot);
-        publicInputs[1] = bytes32(auditPub);
-        publicInputs[2] = bytes32(nullifierHash);
-        publicInputs[3] = bytes32(encryptedAuditPayload);
-        publicInputs[4] = bytes32(auditEphemeralPubX);
-        publicInputs[5] = bytes32(auditEphemeralPubY);
-        publicInputs[6] = bytes32(cipherNonce);
-        publicInputs[7] = bytes32(uint256(uint160(address(recipient))));
+        publicInputs[1] = bytes32(auditPubX);
+        publicInputs[2] = bytes32(auditPubY);
+        publicInputs[3] = bytes32(nullifierHash);
+        publicInputs[4] = bytes32(encryptedAuditPayload);
+        publicInputs[5] = bytes32(auditEphemeralPubX);
+        publicInputs[6] = bytes32(auditEphemeralPubY);
+        publicInputs[7] = bytes32(cipherNonce);
+        publicInputs[8] = bytes32(uint256(uint160(address(recipient))));
 
-        bool ok = verifier.verify(proof, publicInputs);
+        bool ok = withdrawVerifier.verify(proof, publicInputs);
         if (!ok) revert InvalidProof();
 
         nullifierSpent[nullifierHash] = true;
