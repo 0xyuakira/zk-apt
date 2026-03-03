@@ -1,7 +1,7 @@
-use dep::common_merkle::merkle;
-use dep::common_merkle::constants::NOTE_COMMITMENT_DOMAIN;
-use dep::common_merkle::constants::NULLIFIER_DOMAIN;
-use dep::poseidon::poseidon2::Poseidon2;
+use ::common_merkle::constants::NOTE_COMMITMENT_DOMAIN;
+use ::common_merkle::constants::NULLIFIER_DOMAIN;
+use ::common_merkle::merkle;
+use ::poseidon::poseidon2::Poseidon2;
 use std::embedded_curve_ops::{EmbeddedCurvePoint, EmbeddedCurveScalar, multi_scalar_mul};
 
 fn enc_note_data(note_data: Field, shared_key: Field) -> Field {

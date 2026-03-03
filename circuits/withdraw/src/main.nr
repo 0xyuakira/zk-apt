@@ -1,8 +1,8 @@
-use dep::common_merkle::merkle;
-use dep::common_merkle::constants::WITHDRAW_AUDIT_PAYLOAD_DOMAIN;
-use dep::common_merkle::constants::NOTE_COMMITMENT_DOMAIN;
-use dep::common_merkle::constants::NULLIFIER_DOMAIN;
-use dep::poseidon::poseidon2::Poseidon2;
+use ::common_merkle::constants::NOTE_COMMITMENT_DOMAIN;
+use ::common_merkle::constants::NULLIFIER_DOMAIN;
+use ::common_merkle::constants::WITHDRAW_AUDIT_PAYLOAD_DOMAIN;
+use ::common_merkle::merkle;
+use ::poseidon::poseidon2::Poseidon2;
 use std::embedded_curve_ops::{EmbeddedCurvePoint, EmbeddedCurveScalar, multi_scalar_mul};
 
 fn main(
@@ -28,12 +28,17 @@ fn main(
     merkle_index_bits: [bool; 20],
 ) {
     // Old note membership: note is bound to provided owner pubkey.
-    let commitment = Poseidon2::hash([secret, owner_pub_x, owner_pub_y, NOTE_COMMITMENT_DOMAIN], 4);
+    let commitment = Poseidon2::hash(
+        [secret, owner_pub_x, owner_pub_y, NOTE_COMMITMENT_DOMAIN],
+        4,
+    );
     merkle::assert_membership(merkle_root, commitment, merkle_path, merkle_index_bits);
 
     // Nullifier must be bound to both secret and spender private key limbs.
-    let computed_nullifier_hash =
-        Poseidon2::hash([secret, owner_priv_lo as Field, owner_priv_hi as Field, NULLIFIER_DOMAIN], 4);
+    let computed_nullifier_hash = Poseidon2::hash(
+        [secret, owner_priv_lo as Field, owner_priv_hi as Field, NULLIFIER_DOMAIN],
+        4,
+    );
     assert(computed_nullifier_hash == nullifier_hash);
 
     // Ephemeral pubkey must match witness private scalar.
