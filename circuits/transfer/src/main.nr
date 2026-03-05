@@ -2,93 +2,86 @@ use ::common_merkle::constants::NOTE_COMMITMENT_DOMAIN;
 use ::common_merkle::constants::NULLIFIER_DOMAIN;
 use ::common_merkle::merkle;
 use ::poseidon::poseidon2::Poseidon2;
-use std::embedded_curve_ops::{EmbeddedCurvePoint, EmbeddedCurveScalar, multi_scalar_mul};
-
-fn enc_note_data(note_data: Field, shared_key: Field) -> Field {
-    note_data + shared_key
-}
+use std::embedded_curve_ops::{
+    EmbeddedCurvePoint, EmbeddedCurveScalar, fixed_base_scalar_mul, multi_scalar_mul,
+};
 
 fn main(
-    // Public inputs: must align with Solidity submitTransfer publicInputs[0..11]
-    auditPubX: pub Field,
-    auditPubY: pub Field,
-    merkleRoot: pub Field,
-    transferCommitment: pub Field,
-    nullifierHash: pub Field,
-    encryptedNoteDataReceiver: pub Field,
-    encryptedNoteDataAudit: pub Field,
-    receiverEphemeralPubX: pub Field,
-    receiverEphemeralPubY: pub Field,
-    auditEphemeralPubX: pub Field,
-    auditEphemeralPubY: pub Field,
-    cipherNonce: pub Field,
-    // Private witness
+    // Public inputs
+    audit_pub_x: pub Field,
+    audit_pub_y: pub Field,
+    merkle_root: pub Field,
+    transfer_commitment: pub Field,
+    nullifier_hash: pub Field,
+    encrypted_recipient_payload: pub Field,
+    encrypted_audit_payload: pub Field,
+    ephemeral_pub_x: pub Field,
+    ephemeral_pub_y: pub Field,
+    cipher_nonce: pub Field,
+    // Private inputs
     secret: Field,
-    ownerPubX: Field,
-    ownerPubY: Field,
-    ownerPrivLo: u128,
-    ownerPrivHi: u128,
-    newSecret: Field,
-    receiverPubX: Field,
-    receiverPubY: Field,
-    receiverEphemeralPrivLo: u128,
-    receiverEphemeralPrivHi: u128,
-    auditEphemeralPrivLo: u128,
-    auditEphemeralPrivHi: u128,
-    merklePath: [Field; 20],
-    merkleIndexBits: [bool; 20],
+    owner_priv_lo: u128,
+    owner_priv_hi: u128,
+    new_secret: Field,
+    recipient_pub_x: Field,
+    recipient_pub_y: Field,
+    ephemeral_priv_lo: u128,
+    ephemeral_priv_hi: u128,
+    merkle_path: [Field; 20],
+    merkle_index_bits: [bool; 20],
 ) {
-    // Old note membership: note is bound to provided owner pubkey.
-    let commitment = Poseidon2::hash([secret, ownerPubX, ownerPubY, NOTE_COMMITMENT_DOMAIN], 4);
-    merkle::assert_membership(merkleRoot, commitment, merklePath, merkleIndexBits);
+    // Derive spender public key from the provided private key limbs.
+    let owner_scalar: EmbeddedCurveScalar =
+        EmbeddedCurveScalar { lo: owner_priv_lo as Field, hi: owner_priv_hi as Field };
+    let derived_owner_pub = fixed_base_scalar_mul(owner_scalar);
+
+    // Old note membership: note is bound to derived owner pubkey.
+    let commitment = Poseidon2::hash(
+        [secret, derived_owner_pub.x, derived_owner_pub.y, NOTE_COMMITMENT_DOMAIN],
+        4,
+    );
+    merkle::assert_membership(merkle_root, commitment, merkle_path, merkle_index_bits);
 
     // Nullifier must be bound to both secret and spender private key limbs.
-    let computedNullifierHash = Poseidon2::hash(
-        [secret, ownerPrivLo as Field, ownerPrivHi as Field, NULLIFIER_DOMAIN],
+    let computed_nullifier_hash = Poseidon2::hash(
+        [secret, owner_priv_lo as Field, owner_priv_hi as Field, NULLIFIER_DOMAIN],
         4,
     );
-    assert(computedNullifierHash == nullifierHash);
+    assert(computed_nullifier_hash == nullifier_hash);
 
     // New output note commitment must be derived from fresh secret material.
-    let computedTransferCommitment = Poseidon2::hash(
-        [newSecret, receiverPubX, receiverPubY, NOTE_COMMITMENT_DOMAIN],
+    let computed_transfer_commitment = Poseidon2::hash(
+        [new_secret, recipient_pub_x, recipient_pub_y, NOTE_COMMITMENT_DOMAIN],
         4,
     );
-    assert(computedTransferCommitment == transferCommitment);
+    assert(computed_transfer_commitment == transfer_commitment);
 
-    // Ephemeral pubkeys must match witness private scalars
-    let ecdh_generator: [EmbeddedCurvePoint; 1] =
-        std::hash::derive_generators("APT_ECDH".as_bytes(), 0);
-    let receiverEphemeralScalar = EmbeddedCurveScalar {
-        lo: receiverEphemeralPrivLo as Field,
-        hi: receiverEphemeralPrivHi as Field,
-    };
-    // Full-scalar witness: two constrained 128-bit limbs.
-    let auditEphemeralScalar = EmbeddedCurveScalar {
-        lo: auditEphemeralPrivLo as Field,
-        hi: auditEphemeralPrivHi as Field,
-    };
-    let receiverEphemeralPub = multi_scalar_mul(ecdh_generator, [receiverEphemeralScalar]);
-    let auditEphemeralPub = multi_scalar_mul(ecdh_generator, [auditEphemeralScalar]);
-    assert(receiverEphemeralPub.x == receiverEphemeralPubX);
-    assert(receiverEphemeralPub.y == receiverEphemeralPubY);
-    assert(auditEphemeralPub.x == auditEphemeralPubX);
-    assert(auditEphemeralPub.y == auditEphemeralPubY);
+    // Ephemeral pubkeys must match witness private scalars.
+    let ephemeral_scalar =
+        EmbeddedCurveScalar { lo: ephemeral_priv_lo as Field, hi: ephemeral_priv_hi as Field };
+    let ephemeral_pub = fixed_base_scalar_mul(ephemeral_scalar);
+    assert(ephemeral_pub.x == ephemeral_pub_x);
+    assert(ephemeral_pub.y == ephemeral_pub_y);
 
-    // Encrypted payload consistency
-    let receiverPubPoint =
-        EmbeddedCurvePoint { x: receiverPubX, y: receiverPubY, is_infinite: false };
-    let sharedReceiverPoint = multi_scalar_mul([receiverPubPoint], [receiverEphemeralScalar]);
-    let kReceiver = Poseidon2::hash([sharedReceiverPoint.x, sharedReceiverPoint.y], 2);
-    let auditPubPoint = EmbeddedCurvePoint { x: auditPubX, y: auditPubY, is_infinite: false };
-    let sharedAuditPoint = multi_scalar_mul([auditPubPoint], [auditEphemeralScalar]);
-    let kAudit = Poseidon2::hash([sharedAuditPoint.x, sharedAuditPoint.y], 2);
-    // Receiver gets fresh secret for the new note, audit gets lineage payload.
-    let auditPayload = Poseidon2::hash([commitment, transferCommitment], 2);
-    let receiverMask = Poseidon2::hash([kReceiver, cipherNonce], 2);
-    let auditMask = Poseidon2::hash([kAudit, cipherNonce], 2);
-    let computedEncryptedNoteDataReceiver = enc_note_data(newSecret, receiverMask);
-    let computedEncryptedNoteDataAudit = enc_note_data(auditPayload, auditMask);
-    assert(computedEncryptedNoteDataReceiver == encryptedNoteDataReceiver);
-    assert(computedEncryptedNoteDataAudit == encryptedNoteDataAudit);
+    // Encrypted payload consistency using ECDH shared point
+    // 1.Receiver channel ECDH and symmetric key.
+    let recipient_pub_point =
+        EmbeddedCurvePoint { x: recipient_pub_x, y: recipient_pub_y, is_infinite: false };
+    let shared_recipient_point = multi_scalar_mul([recipient_pub_point], [ephemeral_scalar]);
+    let k_recipient = Poseidon2::hash([shared_recipient_point.x, shared_recipient_point.y], 2);
+
+    // 2.Audit channel ECDH and symmetric key.
+    let audit_pub_point = EmbeddedCurvePoint { x: audit_pub_x, y: audit_pub_y, is_infinite: false };
+    let shared_audit_point = multi_scalar_mul([audit_pub_point], [ephemeral_scalar]);
+    let k_audit = Poseidon2::hash([shared_audit_point.x, shared_audit_point.y], 2);
+
+    // 3.Per-channel masks derived from key + nonce.
+    let recipient_mask = Poseidon2::hash([k_recipient, cipher_nonce], 2);
+    let audit_mask = Poseidon2::hash([k_audit, cipher_nonce], 2);
+
+    // 4.recipient gets new_secret; audit gets raw old commitment for tracing.
+    let computed_encrypted_recipient_payload = new_secret + recipient_mask;
+    let computed_encrypted_audit_payload = commitment + audit_mask;
+    assert(computed_encrypted_recipient_payload == encrypted_recipient_payload);
+    assert(computed_encrypted_audit_payload == encrypted_audit_payload);
 }
