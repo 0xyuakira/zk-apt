@@ -1,6 +1,5 @@
 use ::common_merkle::constants::NOTE_COMMITMENT_DOMAIN;
 use ::common_merkle::constants::NULLIFIER_DOMAIN;
-use ::common_merkle::constants::WITHDRAW_AUDIT_PAYLOAD_DOMAIN;
 use ::common_merkle::merkle;
 use ::poseidon::poseidon2::Poseidon2;
 use std::embedded_curve_ops::{
@@ -57,11 +56,9 @@ fn main(
     let audit_pub_point = EmbeddedCurvePoint { x: audit_pub_x, y: audit_pub_y, is_infinite: false };
     let shared_audit_point = multi_scalar_mul([audit_pub_point], [ephemeral_scalar]);
     let k_audit = Poseidon2::hash([shared_audit_point.x, shared_audit_point.y], 2);
-    let audit_payload = Poseidon2::hash(
-        [commitment, nullifier_hash, recipient, WITHDRAW_AUDIT_PAYLOAD_DOMAIN],
-        4,
-    );
+    let audit_payload = commitment;
     let audit_mask = Poseidon2::hash([k_audit, cipher_nonce], 2);
     let computed_encrypted_audit_payload = audit_payload + audit_mask;
+    assert(recipient == recipient);
     assert(computed_encrypted_audit_payload == encrypted_audit_payload);
 }

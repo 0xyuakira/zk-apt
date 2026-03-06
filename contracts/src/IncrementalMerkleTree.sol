@@ -4,22 +4,24 @@ pragma solidity ^0.8.24;
 import {Poseidon2} from "poseidon2-evm/Poseidon2.sol";
 import {Field} from "poseidon2-evm/Field.sol";
 
+/// @title Incremental Merkle Tree
+/// @notice Append-only Poseidon2 Merkle tree with rolling root history.
 abstract contract IncrementalMerkleTree {
     error InvalidDepth();
     error MerkleTreeFull();
+
     uint32 public constant ROOT_HISTORY_SIZE = 30;
-
-    // Domain-separated empty leaf: Fr(keccak256("yuakira"))
-    uint256 public constant ZERO_LEAF = 18364542742846956303373580614229727336767827731373926140228050716427120109049;
-
+    uint256 public constant ZERO_LEAF = 18364542742846956303373580614229727336767827731373926140228050716427120109049; // Domain-separated empty leaf: Fr(keccak256("yuakira"))
     Poseidon2 internal immutable poseidon2;
     uint32 public immutable treeDepth;
     uint32 public nextLeafIndex;
     uint32 public currentRootIndex;
-
     uint256[32] public cachedSubTree;
     mapping(uint256 => uint256) public roots;
 
+    /// @notice Initializes tree parameters and sets the initial empty root.
+    /// @param _treeDepth Merkle tree depth. Must be in range [1, 32].
+    /// @param _poseidon2 Address of the Poseidon2 hasher contract.
     constructor(uint32 _treeDepth, address _poseidon2) {
         if (_treeDepth == 0 || _treeDepth > 32) revert InvalidDepth();
         treeDepth = _treeDepth;
@@ -28,6 +30,32 @@ abstract contract IncrementalMerkleTree {
         roots[0] = _zeroAt(_treeDepth - 1);
     }
 
+    /// @notice Returns true if a root exists in the recent root history.
+    /// @param root Root to query.
+    /// @return Whether the root is known.
+    function isKnownRoot(uint256 root) public view returns (bool) {
+        if (root == 0) {
+            return false;
+        }
+
+        uint32 _currentRootIndex = currentRootIndex;
+        uint32 i = _currentRootIndex;
+        do {
+            if (roots[i] == root) {
+                return true;
+            }
+            if (i == 0) {
+                i = ROOT_HISTORY_SIZE;
+            }
+            i--;
+        } while (i != _currentRootIndex);
+        return false;
+    }
+
+    /// @notice Inserts a leaf and updates the Merkle root.
+    /// @dev Uses cached subtree values for O(depth) append operation.
+    /// @param leaf New leaf value.
+    /// @return The newly computed root.
     function _insertLeaf(uint256 leaf) internal returns (uint256) {
         uint256 _nextLeafIndex = nextLeafIndex;
         if (_nextLeafIndex == uint256(1) << treeDepth) revert MerkleTreeFull();
@@ -57,25 +85,9 @@ abstract contract IncrementalMerkleTree {
         return currentHash;
     }
 
-    function isKnownRoot(uint256 root) public view returns (bool) {
-        if (root == 0) {
-            return false;
-        }
-
-        uint32 _currentRootIndex = currentRootIndex;
-        uint32 i = _currentRootIndex;
-        do {
-            if (roots[i] == root) {
-                return true;
-            }
-            if (i == 0) {
-                i = ROOT_HISTORY_SIZE;
-            }
-            i--;
-        } while (i != _currentRootIndex);
-        return false;
-    }
-
+    /// @notice Returns the precomputed zero value at a given tree level.
+    /// @param level Tree level.
+    /// @return Zero hash for the given level.
     function _zeroAt(uint32 level) internal pure returns (uint256) {
         if (level == 0) return ZERO_LEAF;
         if (level == 1) return 265165880919581242006263742449469351772439414086394417175427227405380575868;

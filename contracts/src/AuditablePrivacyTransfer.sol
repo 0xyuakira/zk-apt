@@ -4,6 +4,8 @@ pragma solidity ^0.8.24;
 import {IVerifier} from "./IVerifier.sol";
 import {IncrementalMerkleTree} from "./IncrementalMerkleTree.sol";
 
+/// @title AuditablePrivacyTransfer
+/// @notice Fixed-denomination privacy pool with auditable transfer and withdraw flows.
 contract AuditablePrivacyTransfer is IncrementalMerkleTree {
     error CommitmentAlreadyUsed();
     error InvalidDenomination(uint256 expected, uint256 actual);
@@ -13,31 +15,41 @@ contract AuditablePrivacyTransfer is IncrementalMerkleTree {
     error InsufficientPoolBalance(uint256 requested, uint256 available);
     error PaymentFailed(address recipient, uint256 amount);
 
+    /// @dev Number of public inputs expected by the deposit circuit.
     uint8 public constant DEPOSIT_PUBLIC_INPUT_COUNT = 1;
-    uint8 public constant TRANSFER_PUBLIC_INPUT_COUNT = 12;
+    /// @dev Number of public inputs expected by the transfer circuit.
+    uint8 public constant TRANSFER_PUBLIC_INPUT_COUNT = 10;
+    /// @dev Number of public inputs expected by the withdraw circuit.
     uint8 public constant WITHDRAW_PUBLIC_INPUT_COUNT = 9;
+    /// @dev Merkle tree depth used by both contract and circuits.
     uint32 public constant TREE_DEPTH = 20;
 
+    /// @dev Verifier contract for deposit proofs.
     IVerifier public immutable depositVerifier;
+    /// @dev Verifier contract for transfer proofs.
     IVerifier public immutable transferVerifier;
+    /// @dev Verifier contract for withdraw proofs.
     IVerifier public immutable withdrawVerifier;
+    /// @dev Fixed ETH amount for each deposit/withdraw.
     uint256 public immutable denomination;
+    /// @dev Long-term audit public key X coordinate.
     uint256 public immutable auditPubX;
+    /// @dev Long-term audit public key Y coordinate.
     uint256 public immutable auditPubY;
 
+    /// @dev Tracks whether a nullifier has been spent.
     mapping(uint256 => bool) public nullifierSpent;
+    /// @dev Tracks whether a commitment has already been inserted.
     mapping(uint256 => bool) public commitmentUsed;
 
     struct SubmitTransferParams {
         uint256 merkleRoot;
         uint256 transferCommitment;
         uint256 nullifierHash;
-        uint256 encryptedNoteDataReceiver;
-        uint256 encryptedNoteDataAudit;
-        uint256 receiverEphemeralPubX;
-        uint256 receiverEphemeralPubY;
-        uint256 auditEphemeralPubX;
-        uint256 auditEphemeralPubY;
+        uint256 encryptedRecipientPayload;
+        uint256 encryptedAuditPayload;
+        uint256 ephemeralPubX;
+        uint256 ephemeralPubY;
         uint256 cipherNonce;
     }
 
@@ -47,8 +59,8 @@ contract AuditablePrivacyTransfer is IncrementalMerkleTree {
         address indexed recipient,
         uint256 indexed nullifierHash,
         uint256 encryptedAuditPayload,
-        uint256 auditEphemeralPubX,
-        uint256 auditEphemeralPubY,
+        uint256 ephemeralPubX,
+        uint256 ephemeralPubY,
         uint256 cipherNonce,
         uint256 amount,
         uint256 newRoot
@@ -57,12 +69,10 @@ contract AuditablePrivacyTransfer is IncrementalMerkleTree {
     event TransferSubmitted(
         uint256 indexed nullifierHash,
         uint256 indexed transferCommitment,
-        uint256 encryptedNoteDataReceiver,
-        uint256 encryptedNoteDataAudit,
-        uint256 receiverEphemeralPubX,
-        uint256 receiverEphemeralPubY,
-        uint256 auditEphemeralPubX,
-        uint256 auditEphemeralPubY,
+        uint256 encryptedRecipientPayload,
+        uint256 encryptedAuditPayload,
+        uint256 ephemeralPubX,
+        uint256 ephemeralPubY,
         uint256 cipherNonce,
         uint256 newRoot,
         uint256 leafIndex
@@ -85,6 +95,9 @@ contract AuditablePrivacyTransfer is IncrementalMerkleTree {
         auditPubY = _auditPubY;
     }
 
+    /// @notice Deposits one fixed denomination and inserts a new commitment.
+    /// @param proof ZK proof for deposit circuit.
+    /// @param commitment New note commitment to insert.
     function deposit(bytes calldata proof, uint256 commitment) external payable {
         if (commitmentUsed[commitment]) revert CommitmentAlreadyUsed();
         if (msg.value != denomination) revert InvalidDenomination(denomination, msg.value);
@@ -98,6 +111,9 @@ contract AuditablePrivacyTransfer is IncrementalMerkleTree {
         emit DepositSubmitted(msg.sender, commitment, insertedLeafIndex, newRoot);
     }
 
+    /// @notice Submits a private transfer that spends one note and creates one new note.
+    /// @param proof ZK proof for transfer circuit.
+    /// @param params Public transfer values bound by the proof.
     function submitTransfer(bytes calldata proof, SubmitTransferParams calldata params) external {
         if (!isKnownRoot(params.merkleRoot)) revert UnknownMerkleRoot();
         if (nullifierSpent[params.nullifierHash]) revert NullifierAlreadySpent();
@@ -109,13 +125,11 @@ contract AuditablePrivacyTransfer is IncrementalMerkleTree {
         publicInputs[2] = bytes32(params.merkleRoot);
         publicInputs[3] = bytes32(params.transferCommitment);
         publicInputs[4] = bytes32(params.nullifierHash);
-        publicInputs[5] = bytes32(params.encryptedNoteDataReceiver);
-        publicInputs[6] = bytes32(params.encryptedNoteDataAudit);
-        publicInputs[7] = bytes32(params.receiverEphemeralPubX);
-        publicInputs[8] = bytes32(params.receiverEphemeralPubY);
-        publicInputs[9] = bytes32(params.auditEphemeralPubX);
-        publicInputs[10] = bytes32(params.auditEphemeralPubY);
-        publicInputs[11] = bytes32(params.cipherNonce);
+        publicInputs[5] = bytes32(params.encryptedRecipientPayload);
+        publicInputs[6] = bytes32(params.encryptedAuditPayload);
+        publicInputs[7] = bytes32(params.ephemeralPubX);
+        publicInputs[8] = bytes32(params.ephemeralPubY);
+        publicInputs[9] = bytes32(params.cipherNonce);
 
         if (!transferVerifier.verify(proof, publicInputs)) revert InvalidProof();
 
@@ -127,25 +141,32 @@ contract AuditablePrivacyTransfer is IncrementalMerkleTree {
         emit TransferSubmitted(
             params.nullifierHash,
             params.transferCommitment,
-            params.encryptedNoteDataReceiver,
-            params.encryptedNoteDataAudit,
-            params.receiverEphemeralPubX,
-            params.receiverEphemeralPubY,
-            params.auditEphemeralPubX,
-            params.auditEphemeralPubY,
+            params.encryptedRecipientPayload,
+            params.encryptedAuditPayload,
+            params.ephemeralPubX,
+            params.ephemeralPubY,
             params.cipherNonce,
             newRoot,
             insertedLeafIndex
         );
     }
 
+    /// @notice Withdraws one fixed denomination to a recipient.
+    /// @param proof ZK proof for withdraw circuit.
+    /// @param merkleRoot Known root that includes the spent note.
+    /// @param nullifierHash Nullifier hash of the spent note.
+    /// @param encryptedAuditPayload Encrypted audit payload emitted on-chain.
+    /// @param ephemeralPubX Ephemeral public key X for audit decryption.
+    /// @param ephemeralPubY Ephemeral public key Y for audit decryption.
+    /// @param cipherNonce Nonce used for payload masking.
+    /// @param recipient ETH recipient address.
     function withdraw(
         bytes calldata proof,
         uint256 merkleRoot,
         uint256 nullifierHash,
         uint256 encryptedAuditPayload,
-        uint256 auditEphemeralPubX,
-        uint256 auditEphemeralPubY,
+        uint256 ephemeralPubX,
+        uint256 ephemeralPubY,
         uint256 cipherNonce,
         address payable recipient
     ) external {
@@ -159,8 +180,8 @@ contract AuditablePrivacyTransfer is IncrementalMerkleTree {
         publicInputs[2] = bytes32(auditPubY);
         publicInputs[3] = bytes32(nullifierHash);
         publicInputs[4] = bytes32(encryptedAuditPayload);
-        publicInputs[5] = bytes32(auditEphemeralPubX);
-        publicInputs[6] = bytes32(auditEphemeralPubY);
+        publicInputs[5] = bytes32(ephemeralPubX);
+        publicInputs[6] = bytes32(ephemeralPubY);
         publicInputs[7] = bytes32(cipherNonce);
         publicInputs[8] = bytes32(uint256(uint160(address(recipient))));
 
@@ -177,8 +198,8 @@ contract AuditablePrivacyTransfer is IncrementalMerkleTree {
             recipient,
             nullifierHash,
             encryptedAuditPayload,
-            auditEphemeralPubX,
-            auditEphemeralPubY,
+            ephemeralPubX,
+            ephemeralPubY,
             cipherNonce,
             denomination,
             newRoot
