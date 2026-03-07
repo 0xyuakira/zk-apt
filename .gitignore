@@ -1,0 +1,17 @@
+contracts/cache
+contracts/out
+contracts/lib/
+contracts/broadcast/
+contracts/.forge-snapshots/
+contracts/coverage/
+contracts/zk-scripts/node_modules/
+
+# Noir circuit build artifacts
+circuits/**/target/
+circuits/**/Prover.toml
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+.env
